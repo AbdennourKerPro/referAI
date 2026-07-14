@@ -1,5 +1,5 @@
 model: yolo11m.pt
-data: /path/to/sportsmot_yolo/data.yaml
+data: data/processed/sportsmot_yolo/data.yaml
 hardware:
   max_devices: 3
 train:
@@ -25,4 +25,3 @@ train:
   deterministic: true
   project: runs/detect
   name: phase1_sportsmot
-

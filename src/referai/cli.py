@@ -18,6 +18,7 @@ from .data import (
 from .hardware import inspect_gpus, profile_summary, resolve_profile
 from .tracking import track_video
 from .training import train_detector, validate_detector
+from .visualization import visualize_mot_sequences
 
 
 def _hardware(path: Optional[str]) -> Dict[str, Any]:
@@ -49,6 +50,26 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--ratios", type=_ratios, default=(0.70, 0.15, 0.15))
     prepare.add_argument("--seed", type=int, default=42)
     prepare.add_argument("--link-mode", choices=("symlink", "hardlink", "copy"), default="symlink")
+
+    visualize = subparsers.add_parser(
+        "visualize-mot", help="Cree des videos de sequences MOT avec leur verite terrain"
+    )
+    visualize.add_argument("--source", type=Path, required=True)
+    visualize.add_argument("--output", type=Path, required=True)
+    visualize.add_argument("-n", "--num-sequences", type=int, default=2)
+    visualize.add_argument("--sequence-list", type=Path)
+    visualize.add_argument("--split", choices=("train", "val", "test", "all"), default="all")
+    visualize.add_argument(
+        "--sequence", dest="sequences", action="append", help="Nom exact; option repetable"
+    )
+    boxes = visualize.add_mutually_exclusive_group()
+    boxes.add_argument("--boxes", dest="show_boxes", action="store_true")
+    boxes.add_argument("--no-boxes", dest="show_boxes", action="store_false")
+    visualize.set_defaults(show_boxes=True)
+    visualize.add_argument("--shuffle", action="store_true")
+    visualize.add_argument("--seed", type=int, default=42)
+    visualize.add_argument("--max-frames", type=int)
+    visualize.add_argument("--fps", type=float, help="Remplace le FPS de seqinfo.ini")
 
     match_map = subparsers.add_parser(
         "create-match-map", help="Cree le CSV sequence -> match a completer"
@@ -121,6 +142,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             link_mode=args.link_mode,
         )
         print(json.dumps(asdict(stats), indent=2))
+    elif args.command == "visualize-mot":
+        results = visualize_mot_sequences(
+            source=args.source,
+            output=args.output,
+            num_sequences=args.num_sequences,
+            sequence_list=args.sequence_list,
+            split=args.split,
+            sequence_names=args.sequences,
+            show_boxes=args.show_boxes,
+            shuffle=args.shuffle,
+            seed=args.seed,
+            max_frames=args.max_frames,
+            fps=args.fps,
+        )
+        print(json.dumps([result.to_dict() for result in results], indent=2))
     elif args.command == "create-match-map":
         count = create_match_map_template(
             args.source, args.output, args.sequence_list, args.force

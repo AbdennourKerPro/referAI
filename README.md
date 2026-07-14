@@ -74,16 +74,67 @@ OneDrive et non l'archive.
 1. Depuis un navigateur, ouvrir le lien OneDrive SportsMOT, se connecter à un compte
    Microsoft et choisir **Ajouter un raccourci à Mes fichiers** pour le dossier
    partagé. Cette étape est nécessaire car `rclone` n'expose pas directement les
-   éléments « Partagés avec moi ».
+   éléments « Partagés avec moi ». Le fil d'Ariane ne doit plus seulement indiquer
+   « Partagé avec moi » : vérifier que le raccourci `SportsMOT` est visible en
+   ouvrant **Mes fichiers**. Si le bouton n'apparaît pas à l'intérieur du dossier,
+   revenir à son dossier parent, sélectionner `SportsMOT`, puis utiliser le menu
+   contextuel `...`.
+
+Si SportsMOT est accessible par son URL publique mais n'apparaît pas dans la page
+racine **Partagé avec moi**, le propriétaire n'a pas partagé le dossier directement
+avec le compte Microsoft. Dans ce cas, OneDrive ne permet pas d'ajouter le raccourci
+et la méthode `rclone` ci-dessous ne pourra pas voir le ZIP. Utiliser alors la méthode
+du lien direct temporaire.
+
+##### Alternative pour un partage public sans raccourci
+
+1. Ouvrir le lien SportsMOT dans une fenêtre de navigation privée, sans connexion au
+   compte Microsoft. Cela évite que la commande capturée contienne les cookies du
+   compte personnel.
+2. Ouvrir les outils de développement du navigateur (`F12` ou `Ctrl+Shift+I`), onglet
+   **Network/Réseau**, puis vider la liste des requêtes.
+3. Dans OneDrive, lancer le téléchargement de `sportsmot_publish.zip`. Repérer la
+   requête `download`, `download.aspx` ou celle transférant le ZIP, faire clic droit,
+   puis **Copy > Copy as cURL**. Annuler immédiatement le téléchargement local.
+4. Ne pas publier cette commande ni la coller dans un ticket : son URL signée est un
+   accès temporaire au fichier. La coller directement dans un terminal SSH privé sur
+   le serveur, ajouter les options suivantes à la fin de la commande copiée :
+
+```bash
+--location \
+--fail \
+--retry 10 \
+--retry-delay 5 \
+--continue-at - \
+--output data/SportsMOT/raw/sportsmot_publish.zip
+```
+
+Créer auparavant le dossier avec `mkdir -p data/SportsMOT/raw` et lancer idéalement
+le transfert dans `tmux new -s sportsmot` pour qu'il survive à la déconnexion SSH. Si
+la connexion est coupée ou si l'URL expire, générer une nouvelle commande « Copy as cURL » puis la
+relancer avec le même `--output` et `--continue-at -`; le téléchargement reprend à
+partir du fichier partiel si le serveur OneDrive accepte les requêtes HTTP Range.
+
+Vérifier que le résultat n'est pas une page HTML avant de l'extraire :
+
+```bash
+ls -lh data/SportsMOT/raw/sportsmot_publish.zip
+file data/SportsMOT/raw/sportsmot_publish.zip
+unzip -t data/SportsMOT/raw/sportsmot_publish.zip
+```
+
+`file` doit identifier une archive ZIP, pas un document HTML. La suite de cette
+section décrit la méthode `rclone` à utiliser uniquement lorsque le raccourci est
+réellement visible dans **Mes fichiers**.
 2. Sur le serveur, vérifier d'abord l'espace disponible sur la partition cible :
 
 ```bash
-df -h /data
-mkdir -p /data/SportsMOT/raw
+df -h data
+mkdir -p data/SportsMOT/raw
 ```
 
 Il faut prévoir simultanément la place de l'archive et celle des fichiers extraits.
-Si `/data` n'existe pas ou n'est pas accessible en écriture, choisir un autre volume
+Si `data` n'existe pas ou n'est pas accessible en écriture, choisir un autre volume
 disposant de suffisamment d'espace et remplacer ce chemin dans toutes les commandes.
 
 3. Installer puis configurer `rclone` sur Ubuntu/Debian :
@@ -96,17 +147,42 @@ rclone config
 
 Dans `rclone config`, créer un nouveau remote nommé `onedrive`, choisir le backend
 Microsoft OneDrive, laisser le `client_id` et le `client_secret` vides, puis répondre
-`n` à la question sur l'ouverture automatique du navigateur. La commande affiche
-alors une instruction du type suivant à exécuter sur une machine possédant un
-navigateur et la même version de `rclone` :
+`1` pour la région Microsoft Cloud Global. À la question **Edit advanced config?**,
+répondre `n`. Si une invite `token>` décrite comme « OAuth Access Token as a JSON
+blob » apparaît, c'est que le menu avancé a été ouvert par erreur : ne rien y coller,
+annuler avec `Ctrl+C` et recommencer la configuration.
+
+Répondre ensuite `n` à la question sur l'ouverture automatique du navigateur.
+**Laisser ce premier terminal serveur ouvert sur l'invite `config_token>`**. Il
+attend le résultat final, pas un code OAuth brut.
+
+Dans un second terminal, sur la machine locale possédant un navigateur et idéalement
+la même version de `rclone`, exécuter :
 
 ```bash
 rclone authorize "onedrive"
 ```
 
-Après l'autorisation Microsoft, copier le jeton affiché dans le terminal du serveur.
-Ce jeton donne accès au OneDrive : ne pas l'ajouter au dépôt, à une capture d'écran
-ou à un journal partagé.
+Ce second terminal affiche `Waiting for code...` pendant qu'il attend le retour du
+navigateur local. Ne rien coller dans ce terminal : ouvrir le navigateur, accepter
+l'autorisation Microsoft et attendre que `rclone authorize` affiche son résultat
+final entre les marqueurs « Paste the following into your remote machine ».
+
+Copier alors le résultat complet dans l'invite `config_token>` du premier terminal
+sur le serveur, puis valider. Cette opération doit répondre en quelques secondes. Un
+terminal qui reste sur `Waiting for code...` attend toujours le navigateur et n'est
+pas l'endroit où coller le résultat.
+
+Le résultat d'autorisation et le contenu de `rclone.conf` donnent accès au OneDrive :
+ne jamais les ajouter au dépôt, à une capture d'écran ou à un journal partagé. En cas
+d'exposition, interrompre la commande, révoquer immédiatement l'autorisation rclone
+dans le compte Microsoft, supprimer le remote avec `rclone config delete onedrive`
+s'il existe, puis recommencer l'autorisation avec un nouveau jeton.
+
+Après l'autorisation, rclone peut proposer plusieurs drives, notamment des espaces
+système comme `ODCMetadataArchive` ou `Bundles_*`. Choisir l'entrée explicitement
+nommée **OneDrive (personal)**, même si une entrée portant seulement un UUID est
+présentée comme valeur par défaut. Confirmer ensuite la configuration.
 
 4. Retrouver le nom exact du raccourci et inspecter son contenu :
 
@@ -120,7 +196,7 @@ le contenu directement sur le serveur. Pour que le transfert survive à une coup
 SSH, lancer au préalable `tmux new -s sportsmot`, puis exécuter :
 
 ```bash
-rclone copy "onedrive:SportsMOT-2022-4-24" /data/SportsMOT/raw \
+rclone copy "onedrive:SportsMOT-2022-4-24" data/SportsMOT/raw \
   --progress \
   --transfers 4 \
   --checkers 8 \
@@ -132,9 +208,9 @@ Relancer exactement la même commande après une coupure : `rclone copy` ignore 
 fichiers déjà transférés et reprend le contenu manquant. Vérifier ensuite les ZIP :
 
 ```bash
-find /data/SportsMOT/raw -type f -name '*.zip' -print
-unzip -t /data/SportsMOT/raw/<ARCHIVE_SPORTSMOT>.zip
-unzip /data/SportsMOT/raw/<ARCHIVE_SPORTSMOT>.zip -d /data/SportsMOT
+find data/SportsMOT/raw -type f -name '*.zip' -print
+unzip -t data/SportsMOT/raw/<ARCHIVE_SPORTSMOT>.zip
+unzip data/SportsMOT/raw/<ARCHIVE_SPORTSMOT>.zip -d data/SportsMOT
 ```
 
 Remplacer `<ARCHIVE_SPORTSMOT>` par le nom réellement listé. Ne supprimer l'archive
@@ -144,7 +220,7 @@ d'arborescence ci-dessous.
 #### Arborescence attendue après extraction
 
 ```text
-/data/SportsMOT/
+data/SportsMOT/
 ├── splits_txt/
 │   ├── football.txt
 │   ├── train.txt
@@ -175,26 +251,106 @@ Le test officiel peut ne pas fournir `gt/gt.txt`. C'est normal : ces images sero
 converties, mais elles ne doivent pas servir à calculer localement des métriques avec
 des annotations absentes.
 
+#### Que contient exactement SportsMOT ?
+
+SportsMOT est un dataset de **suivi multi-objets** au format MOTChallenge. Il contient
+240 courtes séquences issues de trois sports : football, basketball et volleyball.
+Pour ce projet, `splits_txt/football.txt` permet de ne conserver que le football.
+
+Chaque séquence contient principalement :
+
+| Élément | Contenu | Rôle |
+|---|---|---|
+| `img1/000001.jpg`, etc. | Images successives, dans l'ordre temporel | Entrées du détecteur et du tracker |
+| `seqinfo.ini` | Nom, nombre d'images, FPS, largeur, hauteur et extension | Métadonnées de la séquence |
+| `gt/gt.txt` | Une ligne par joueur annoté et par image | Vérité terrain de détection et de tracking |
+| `splits_txt/train.txt`, `val.txt`, `test.txt` | Noms des séquences de chaque partition officielle | Séparation entraînement/validation/test |
+| `splits_txt/football.txt` | Noms des séquences de football | Filtre utilisé par ce projet |
+
+Une ligne de `gt/gt.txt` suit ce format :
+
+```text
+frame_id,track_id,x,y,width,height,confidence,class_id,visibility
+```
+
+Par exemple :
+
+```text
+1,7,749,217,34,125,1,1,1
+```
+
+Sur l'image 1, le joueur portant l'identité de suivi `7` occupe donc une boîte dont
+le coin supérieur gauche est `(749, 217)`, avec une largeur de 34 pixels et une
+hauteur de 125 pixels. `confidence=1` indique une annotation valide, `class_id=1`
+désigne un joueur dans SportsMOT et `visibility` décrit son niveau de visibilité.
+Le `track_id` reste stable d'une image à la suivante à l'intérieur d'une séquence.
+
+> **Limite importante :** SportsMOT annote les joueurs présents sur l'aire de jeu. Il
+> ne fournit pas de classes distinctes pour le gardien, l'arbitre ou le ballon et
+> exclut notamment spectateurs et entraîneurs. Avec SportsMOT seul, le projet entraîne
+> donc réellement la classe YOLO `player` (classe 0). Les classes `goalkeeper`,
+> `referee` et `ball` restent déclarées, mais nécessitent un autre dataset les
+> annotant explicitement.
+
+#### Que fait le preprocessing `prepare-mot` ?
+
+Cette étape adapte SportsMOT à l'entraînement YOLO sans modifier les images originales :
+
+1. elle découvre les dossiers contenant `img1` ;
+2. elle filtre les séquences avec `football.txt` lorsque `--sequence-list` est fourni ;
+3. elle conserve les partitions `train`, `val` et `test` avec `--split-strategy existing` ;
+4. elle lit les dimensions depuis `seqinfo.ini`, avec repli sur la première image ;
+5. elle lit `gt.txt`, rejette les annotations invalides et limite les boîtes aux bords ;
+6. elle mappe la classe SportsMOT `1` vers la classe YOLO `0`, `player` ;
+7. elle convertit les boîtes en coordonnées YOLO normalisées ;
+8. elle crée un label `.txt` par image et conserve la GT MOT pour évaluer le tracking ;
+9. elle génère `data.yaml`, les manifestes, les statistiques et les fichiers `seqmap`.
+
+La conversion d'une boîte MOT `[x, y, largeur, hauteur]` vers YOLO est :
+
+```text
+centre_x = (x + largeur / 2) / largeur_image
+centre_y = (y + hauteur / 2) / hauteur_image
+largeur_normalisee = largeur / largeur_image
+hauteur_normalisee = hauteur / hauteur_image
+```
+
+Pour une image de `1280x720`, l'exemple précédent devient :
+
+```text
+0 0.59843750 0.38819444 0.02656250 0.17361111
+```
+
+Le premier nombre est la classe YOLO `player`. Le `track_id=7` ne figure pas dans ce
+label, car YOLO apprend à **détecter** indépendamment sur chaque image. L'identité
+temporelle reste dans la copie de `gt.txt`, utilisée ensuite pour évaluer ByteTrack
+avec des métriques de tracking comme HOTA ou IDF1.
+
+Le preprocessing ne télécharge ou ne décompresse pas le dataset, ne redimensionne pas
+les images, n'invente pas de labels et n'entraîne aucun modèle. Par défaut, il crée des
+liens symboliques vers les images pour éviter une seconde copie. Les augmentations et
+le sur-échantillonnage sont des étapes ultérieures séparées.
+
 Vérifier l'extraction avant de lancer le projet :
 
 ```bash
-test -f /data/SportsMOT/splits_txt/football.txt
-test -d /data/SportsMOT/dataset/train
-find /data/SportsMOT/dataset -name seqinfo.ini | head
+test -f data/SportsMOT/splits_txt/football.txt
+test -d data/SportsMOT/dataset/train
+find data/SportsMOT/dataset -name seqinfo.ini | head
 ```
 
 Chaque `<SEQUENCE>` doit être au format MOT17 : images dans `img1`, dimensions et
 fréquence dans `seqinfo.ini`, annotations dans `gt/gt.txt` pour train/val.
 L'argument `--source` devra pointer précisément vers le sous-dossier `dataset`, et
-non vers la racine `/data/SportsMOT`.
+non vers la racine `data/SportsMOT`.
 
 ### 2. Convertir uniquement les séquences de football
 
 ```bash
 referai-football prepare-mot \
-  --source /data/SportsMOT/dataset \
-  --output /data/processed/sportsmot_yolo \
-  --sequence-list /data/SportsMOT/splits_txt/football.txt \
+  --source data/SportsMOT/dataset \
+  --output data/processed/sportsmot_yolo \
+  --sequence-list data/SportsMOT/splits_txt/football.txt \
   --split-strategy existing \
   --class-map configs/class_map_mot.yaml
 ```
@@ -202,7 +358,7 @@ referai-football prepare-mot \
 Cette commande conserve les splits officiels et produit notamment :
 
 ```text
-/data/processed/sportsmot_yolo/
+data/processed/sportsmot_yolo/
 ├── data.yaml
 ├── images/{train,val,test}/<SEQUENCE>/...
 ├── labels/{train,val,test}/<SEQUENCE>/...
@@ -212,22 +368,72 @@ Cette commande conserve les splits officiels et produit notamment :
 ```
 
 Par défaut, `images/` contient des liens symboliques vers le téléchargement original.
-Il faut donc conserver `/data/SportsMOT` après la conversion. Pour obtenir une copie
+Il faut donc conserver `data/SportsMOT` après la conversion. Pour obtenir une copie
 autonome au prix d'un espace disque supplémentaire, ajouter `--link-mode copy`.
 
-### 3. Renseigner le chemin d'entraînement
+### 3. Visualiser les séquences et leur vérité terrain
 
-Dans `configs/train_sportsmot.yaml`, remplacer :
+La commande suivante sélectionne deux séquences de football du split de validation
+et crée un MP4 annoté par séquence :
 
-```yaml
-data: /path/to/sportsmot_yolo/data.yaml
+```bash
+referai-football visualize-mot \
+  --source data/SportsMOT/dataset \
+  --output data/visualizations/sportsmot \
+  --sequence-list data/SportsMOT/splits_txt/football.txt \
+  --split val \
+  --num-sequences 2 \
+  --boxes
 ```
 
-par :
+Chaque boîte porte le `track_id` de la vérité terrain. Une même identité conserve la
+même couleur au fil des images. Les vidéos produites sont nommées
+`<SEQUENCE>_gt.mp4`. Cette méthode fonctionne sur un serveur SSH sans environnement
+graphique, contrairement à une fenêtre `cv2.imshow()`.
+
+Pour choisir aléatoirement `n` séquences de façon reproductible :
+
+```bash
+referai-football visualize-mot \
+  --source data/SportsMOT/dataset \
+  --output data/visualizations/sportsmot \
+  --sequence-list data/SportsMOT/splits_txt/football.txt \
+  --num-sequences 5 \
+  --shuffle \
+  --seed 42 \
+  --boxes
+```
+
+L'option courte `-n 5` est équivalente à `--num-sequences 5`.
+
+Pour inspecter les images sans aucune annotation, remplacer `--boxes` par
+`--no-boxes`. Pour limiter rapidement la visualisation aux 200 premières images,
+ajouter `--max-frames 200`.
+
+Il est également possible de demander une ou plusieurs séquences précises. Dans ce
+cas, `--num-sequences` est ignoré :
+
+```bash
+referai-football visualize-mot \
+  --source data/SportsMOT/dataset \
+  --output data/visualizations/sportsmot \
+  --sequence <NOM_SEQUENCE_1> \
+  --sequence <NOM_SEQUENCE_2> \
+  --boxes
+```
+
+Le split `test` officiel peut ne pas contenir de `gt.txt`. Avec `--boxes`, la commande
+émet alors un avertissement et produit tout de même une vidéo sans boîtes.
+
+### 4. Vérifier le chemin d'entraînement
+
+`configs/train_sportsmot.yaml` est déjà configuré pour le dossier relatif au dépôt :
 
 ```yaml
-data: /data/processed/sportsmot_yolo/data.yaml
+data: data/processed/sportsmot_yolo/data.yaml
 ```
+
+Les commandes doivent donc être exécutées depuis la racine du dépôt `referAI`.
 
 Puis lancer la phase SportsMOT avec le profil matériel voulu :
 
@@ -252,7 +458,7 @@ clips effectivement téléchargés. Générer d'abord son squelette :
 
 ```bash
 referai-football create-match-map \
-  --source /data/SoccerNet/tracking \
+  --source data/SoccerNet/tracking \
   --output match_map.csv
 ```
 
@@ -263,8 +469,8 @@ cellule vide plutôt que d'inventer un regroupement incorrect.
 
 ```bash
 referai-football prepare-mot \
-  --source /data/SoccerNet/tracking \
-  --output /data/processed/soccernet_yolo \
+  --source data/SoccerNet/tracking \
+  --output data/processed/soccernet_yolo \
   --split-strategy by-match \
   --match-map match_map.csv \
   --class-map configs/class_map_mot.yaml
@@ -284,8 +490,8 @@ utiliser de mapping :
 
 ```bash
 referai-football prepare-mot \
-  --source /data/SoccerNet/tracking \
-  --output /data/processed/soccernet_yolo \
+  --source data/SoccerNet/tracking \
+  --output data/processed/soccernet_yolo \
   --split-strategy existing \
   --class-map configs/class_map_mot.yaml
 ```
@@ -302,12 +508,12 @@ dupliquer les fichiers :
 ```bash
 # Générer d'abord les variantes vidéo réalistes (jeu d'entraînement uniquement)
 referai-football augment \
-  --data /data/processed/soccernet_yolo/data.yaml \
+  --data data/processed/soccernet_yolo/data.yaml \
   --copies 1 --seed 42
 
 # Puis sur-échantillonner le ballon, variantes comprises
 referai-football oversample \
-  --data /data/processed/soccernet_yolo/data.yaml \
+  --data data/processed/soccernet_yolo/data.yaml \
   --class-id 3 --factor 4
 ```
 
@@ -356,7 +562,7 @@ trop lent sur K80, `yolo11s.pt` peut être choisi sans changer le pipeline.
 ```bash
 referai-football validate \
   --weights runs/detect/phase3_ball/weights/best.pt \
-  --data /data/processed/soccernet_yolo/data.yaml \
+  --data data/processed/soccernet_yolo/data.yaml \
   --hardware configs/hardware_3090Ti.yaml --split test
 
 referai-football track \
@@ -396,8 +602,8 @@ cd TrackEval
 python scripts/run_mot_challenge.py \
   --METRICS HOTA CLEAR Identity \
   --DO_PREPROC False \
-  --GT_FOLDER /data/processed/soccernet_yolo/mot_gt \
-  --TRACKERS_FOLDER /data/predictions
+  --GT_FOLDER data/processed/soccernet_yolo/mot_gt \
+  --TRACKERS_FOLDER data/predictions
 ```
 
 L'arborescence finale doit suivre le format de benchmark personnalisé documenté par
