@@ -1,0 +1,12 @@
+# Python 3.10 recommande. cu118 garde une compatibilite large avec les pilotes
+# NVIDIA compatibles CUDA 11, tout en prenant en charge l'architecture sm_86.
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch==2.4.1+cu118
+torchvision==0.19.1+cu118
+ultralytics==8.3.40
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+PyYAML==6.0.2
+pandas==2.2.3
+pyarrow==17.0.0
+psutil==6.0.0

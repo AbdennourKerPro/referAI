@@ -1,0 +1,24 @@
+# Utiliser le data_oversampled.yaml genere par la commande oversample.
+model: /path/to/phase2_soccernet/weights/best.pt
+data: /path/to/soccernet_yolo/data_oversampled.yaml
+hardware:
+  max_devices: 3
+train:
+  epochs: 50
+  patience: 15
+  optimizer: AdamW
+  lr0: 0.0002
+  lrf: 0.01
+  cos_lr: true
+  close_mosaic: 10
+  mosaic: 0.1
+  translate: 0.08
+  scale: 0.25
+  fliplr: 0.5
+  hsv_s: 0.4
+  hsv_v: 0.25
+  cache: false
+  seed: 42
+  deterministic: true
+  project: runs/detect
+  name: phase3_ball

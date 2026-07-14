@@ -1,0 +1,10 @@
+name: rtx_3090_ti
+devices: auto
+max_devices: 1
+imgsz: 1280
+batch_per_gpu: 8
+workers: 8
+amp: true
+max_oom_retries: 3
+min_imgsz: 768
+

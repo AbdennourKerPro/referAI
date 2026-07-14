@@ -1,0 +1,9 @@
+# SoccerNet-Tracking utilise -1; SportsMOT utilise 1. Les deux jeux officiels
+# ne distinguent pas les quatre classes visees dans leur format MOT de base.
+"-1": player
+"1": player
+# Exemple pour un corpus enrichi:
+# "2": goalkeeper
+# "3": referee
+# "4": ball
+

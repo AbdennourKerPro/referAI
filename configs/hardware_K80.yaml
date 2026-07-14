@@ -1,0 +1,10 @@
+name: tesla_k80_3x
+devices: auto
+max_devices: 3
+imgsz: 960
+batch_per_gpu: 1
+workers: 3
+amp: false
+max_oom_retries: 3
+min_imgsz: 640
+

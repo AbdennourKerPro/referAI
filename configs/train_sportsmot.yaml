@@ -1,0 +1,28 @@
+model: yolo11m.pt
+data: /path/to/sportsmot_yolo/data.yaml
+hardware:
+  max_devices: 3
+train:
+  epochs: 50
+  patience: 15
+  optimizer: AdamW
+  lr0: 0.001
+  lrf: 0.01
+  cos_lr: true
+  weight_decay: 0.0005
+  warmup_epochs: 3
+  close_mosaic: 10
+  mosaic: 0.5
+  degrees: 2.0
+  translate: 0.1
+  scale: 0.4
+  fliplr: 0.5
+  hsv_h: 0.015
+  hsv_s: 0.5
+  hsv_v: 0.3
+  cache: false
+  seed: 42
+  deterministic: true
+  project: runs/detect
+  name: phase1_sportsmot
+

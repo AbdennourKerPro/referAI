@@ -1,0 +1,29 @@
+# Remplacer model par le best.pt de la phase SportsMOT si elle a ete executee.
+model: yolo11m.pt
+data: /path/to/soccernet_yolo/data.yaml
+hardware:
+  max_devices: 3
+train:
+  epochs: 100
+  patience: 25
+  optimizer: AdamW
+  lr0: 0.0005
+  lrf: 0.01
+  cos_lr: true
+  weight_decay: 0.0005
+  warmup_epochs: 3
+  close_mosaic: 15
+  mosaic: 0.25
+  degrees: 2.0
+  translate: 0.1
+  scale: 0.35
+  fliplr: 0.5
+  hsv_h: 0.015
+  hsv_s: 0.5
+  hsv_v: 0.3
+  cache: false
+  seed: 42
+  deterministic: true
+  project: runs/detect
+  name: phase2_soccernet
+
