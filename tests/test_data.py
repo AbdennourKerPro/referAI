@@ -1,9 +1,12 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from referai.data import (
     assert_match_disjoint,
     assign_splits,
+    create_match_map_template,
     create_oversampled_dataset,
     discover_sequences,
     prepare_mot_dataset,
@@ -67,6 +70,33 @@ def test_sequence_list_filters_other_sports(tmp_path):
     sequence_list.write_text("football-1\n")
     sequences = discover_sequences(source, sequence_list=sequence_list)
     assert [sequence.name for sequence in sequences] == ["football-1"]
+
+
+def test_create_match_map_template_and_require_completed_map(tmp_path):
+    source = tmp_path / "mot"
+    make_sequence(source, "train", "clip-a")
+    mapping = tmp_path / "match_map.csv"
+    assert create_match_map_template(source, mapping) == 1
+    assert "sequence,match_id,original_split,source_path" in mapping.read_text()
+    with pytest.raises(ValueError, match="match_id vide"):
+        prepare_mot_dataset(
+            source,
+            tmp_path / "output",
+            split_strategy="by-match",
+            match_map=mapping,
+        )
+
+
+def test_missing_match_map_has_actionable_error(tmp_path):
+    source = tmp_path / "mot"
+    make_sequence(source, "train", "clip-a")
+    with pytest.raises(FileNotFoundError, match="create-match-map"):
+        prepare_mot_dataset(
+            source,
+            tmp_path / "output",
+            split_strategy="by-match",
+            match_map=tmp_path / "missing.csv",
+        )
 
 
 def test_ball_oversampling_repeats_rare_images(tmp_path):

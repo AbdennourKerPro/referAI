@@ -49,10 +49,217 @@ python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda
 Sur K80, la seconde commande doit notamment afficher `sm_37`. Sur 3090 Ti, elle
 doit afficher `sm_86`.
 
-## Préparer SoccerNet-Tracking ou SportsMOT
+## Télécharger et préparer SportsMOT
 
-Le convertisseur attend le format MOT17 (`SEQUENCE/img1`, `gt/gt.txt`,
-`seqinfo.ini`). Il crée une arborescence YOLO sans recopier les images par défaut.
+SportsMOT est le jeu recommandé pour commencer la détection et le tracking des
+joueurs. **Le projet ne télécharge pas SportsMOT** : il faut d'abord accepter les
+conditions du dataset, télécharger les archives depuis la page CodaLab indiquée par
+le [dépôt officiel SportsMOT](https://github.com/MCG-NJU/SportsMOT), puis les extraire
+sur la machine d'entraînement. Le script `prepare-mot` intervient seulement après
+cette étape; il ne contacte aucun serveur et ne décompresse aucune archive.
+
+### 1. Télécharger et extraire les données
+
+Le lien officiel ouvre un dossier OneDrive partagé. Sur un serveur Linux, suivre la
+procédure headless ci-dessous; après l'extraction, vérifier l'arborescence indiquée.
+
+#### Téléchargement direct sur un serveur Linux sans interface graphique
+
+Il n'est pas nécessaire de télécharger le ZIP sur la machine locale. La méthode la
+plus robuste pour le dossier OneDrive partagé est `rclone`, car elle sait reprendre
+un transfert interrompu et vérifier les fichiers déjà copiés. `wget` ou `curl`
+appliqués directement à l'URL de partage téléchargent généralement la page HTML
+OneDrive et non l'archive.
+
+1. Depuis un navigateur, ouvrir le lien OneDrive SportsMOT, se connecter à un compte
+   Microsoft et choisir **Ajouter un raccourci à Mes fichiers** pour le dossier
+   partagé. Cette étape est nécessaire car `rclone` n'expose pas directement les
+   éléments « Partagés avec moi ».
+2. Sur le serveur, vérifier d'abord l'espace disponible sur la partition cible :
+
+```bash
+df -h /data
+mkdir -p /data/SportsMOT/raw
+```
+
+Il faut prévoir simultanément la place de l'archive et celle des fichiers extraits.
+Si `/data` n'existe pas ou n'est pas accessible en écriture, choisir un autre volume
+disposant de suffisamment d'espace et remplacer ce chemin dans toutes les commandes.
+
+3. Installer puis configurer `rclone` sur Ubuntu/Debian :
+
+```bash
+sudo apt-get update
+sudo apt-get install rclone
+rclone config
+```
+
+Dans `rclone config`, créer un nouveau remote nommé `onedrive`, choisir le backend
+Microsoft OneDrive, laisser le `client_id` et le `client_secret` vides, puis répondre
+`n` à la question sur l'ouverture automatique du navigateur. La commande affiche
+alors une instruction du type suivant à exécuter sur une machine possédant un
+navigateur et la même version de `rclone` :
+
+```bash
+rclone authorize "onedrive"
+```
+
+Après l'autorisation Microsoft, copier le jeton affiché dans le terminal du serveur.
+Ce jeton donne accès au OneDrive : ne pas l'ajouter au dépôt, à une capture d'écran
+ou à un journal partagé.
+
+4. Retrouver le nom exact du raccourci et inspecter son contenu :
+
+```bash
+rclone lsd onedrive:
+rclone lsf "onedrive:SportsMOT-2022-4-24"
+```
+
+Adapter `SportsMOT-2022-4-24` au nom retourné par `rclone lsd`. Télécharger ensuite
+le contenu directement sur le serveur. Pour que le transfert survive à une coupure
+SSH, lancer au préalable `tmux new -s sportsmot`, puis exécuter :
+
+```bash
+rclone copy "onedrive:SportsMOT-2022-4-24" /data/SportsMOT/raw \
+  --progress \
+  --transfers 4 \
+  --checkers 8 \
+  --retries 10 \
+  --low-level-retries 20
+```
+
+Relancer exactement la même commande après une coupure : `rclone copy` ignore les
+fichiers déjà transférés et reprend le contenu manquant. Vérifier ensuite les ZIP :
+
+```bash
+find /data/SportsMOT/raw -type f -name '*.zip' -print
+unzip -t /data/SportsMOT/raw/<ARCHIVE_SPORTSMOT>.zip
+unzip /data/SportsMOT/raw/<ARCHIVE_SPORTSMOT>.zip -d /data/SportsMOT
+```
+
+Remplacer `<ARCHIVE_SPORTSMOT>` par le nom réellement listé. Ne supprimer l'archive
+qu'après la réussite de `unzip -t`, de l'extraction et des vérifications
+d'arborescence ci-dessous.
+
+#### Arborescence attendue après extraction
+
+```text
+/data/SportsMOT/
+├── splits_txt/
+│   ├── football.txt
+│   ├── train.txt
+│   ├── val.txt
+│   └── test.txt
+└── dataset/
+    ├── train/
+    │   └── <SEQUENCE>/
+    │       ├── img1/
+    │       │   ├── 000001.jpg
+    │       │   ├── 000002.jpg
+    │       │   └── ...
+    │       ├── gt/
+    │       │   └── gt.txt
+    │       └── seqinfo.ini
+    ├── val/
+    │   └── <SEQUENCE>/
+    │       ├── img1/
+    │       ├── gt/gt.txt
+    │       └── seqinfo.ini
+    └── test/
+        └── <SEQUENCE>/
+            ├── img1/
+            └── seqinfo.ini
+```
+
+Le test officiel peut ne pas fournir `gt/gt.txt`. C'est normal : ces images seront
+converties, mais elles ne doivent pas servir à calculer localement des métriques avec
+des annotations absentes.
+
+Vérifier l'extraction avant de lancer le projet :
+
+```bash
+test -f /data/SportsMOT/splits_txt/football.txt
+test -d /data/SportsMOT/dataset/train
+find /data/SportsMOT/dataset -name seqinfo.ini | head
+```
+
+Chaque `<SEQUENCE>` doit être au format MOT17 : images dans `img1`, dimensions et
+fréquence dans `seqinfo.ini`, annotations dans `gt/gt.txt` pour train/val.
+L'argument `--source` devra pointer précisément vers le sous-dossier `dataset`, et
+non vers la racine `/data/SportsMOT`.
+
+### 2. Convertir uniquement les séquences de football
+
+```bash
+referai-football prepare-mot \
+  --source /data/SportsMOT/dataset \
+  --output /data/processed/sportsmot_yolo \
+  --sequence-list /data/SportsMOT/splits_txt/football.txt \
+  --split-strategy existing \
+  --class-map configs/class_map_mot.yaml
+```
+
+Cette commande conserve les splits officiels et produit notamment :
+
+```text
+/data/processed/sportsmot_yolo/
+├── data.yaml
+├── images/{train,val,test}/<SEQUENCE>/...
+├── labels/{train,val,test}/<SEQUENCE>/...
+├── mot_gt/...
+├── conversion_stats.json
+└── split_manifest.json
+```
+
+Par défaut, `images/` contient des liens symboliques vers le téléchargement original.
+Il faut donc conserver `/data/SportsMOT` après la conversion. Pour obtenir une copie
+autonome au prix d'un espace disque supplémentaire, ajouter `--link-mode copy`.
+
+### 3. Renseigner le chemin d'entraînement
+
+Dans `configs/train_sportsmot.yaml`, remplacer :
+
+```yaml
+data: /path/to/sportsmot_yolo/data.yaml
+```
+
+par :
+
+```yaml
+data: /data/processed/sportsmot_yolo/data.yaml
+```
+
+Puis lancer la phase SportsMOT avec le profil matériel voulu :
+
+```bash
+referai-football train \
+  --config configs/train_sportsmot.yaml \
+  --hardware configs/hardware_K80.yaml
+```
+
+SportsMOT annote les joueurs présents sur l'aire de jeu, mais ne constitue pas un
+dataset quatre classes pour `goalkeeper`, `referee` et `ball`. Utilisé seul, il
+permet donc une bonne baseline `player` et de tracking. Pour atteindre la sortie
+complète du module, il faudra ensuite ajouter un corpus football enrichi pour les
+trois classes manquantes.
+
+## Préparer SoccerNet-Tracking (optionnel)
+
+SoccerNet est utile comme seconde phase spécifique au football et pour compléter les
+cas non couverts par SportsMOT. Comme pour SportsMOT, son téléchargement n'est pas
+automatisé. Le fichier `match_map.csv` n'est pas fourni par le dépôt : il dépend des
+clips effectivement téléchargés. Générer d'abord son squelette :
+
+```bash
+referai-football create-match-map \
+  --source /data/SoccerNet/tracking \
+  --output match_map.csv
+```
+
+Ouvrir ensuite `match_map.csv` et renseigner `match_id` avec le même identifiant pour
+tous les clips provenant du même match. La commande suggère automatiquement cet
+identifiant lorsque l'arborescence contient un dossier de match; elle laisse sinon la
+cellule vide plutôt que d'inventer un regroupement incorrect.
 
 ```bash
 referai-football prepare-mot \
@@ -66,20 +273,21 @@ referai-football prepare-mot \
 `match_map.csv` relie chaque clip à son match et empêche les fuites :
 
 ```csv
-sequence,match_id
-SNMOT-001,game_01
-SNMOT-002,game_01
-SNMOT-003,game_02
+sequence,match_id,original_split,source_path
+SNMOT-001,game_01,train,train/SNMOT-001
+SNMOT-002,game_01,train,train/SNMOT-002
+SNMOT-003,game_02,test,test/SNMOT-003
 ```
 
-Avec SportsMOT, les splits officiels sont déjà des dossiers `train/val/test` :
+Pour convertir immédiatement les splits officiels sans les redistribuer, ne pas
+utiliser de mapping :
 
 ```bash
 referai-football prepare-mot \
-  --source /data/SportsMOT/dataset \
-  --output /data/processed/sportsmot_yolo \
-  --sequence-list /data/SportsMOT/splits_txt/football.txt \
-  --split-strategy existing
+  --source /data/SoccerNet/tracking \
+  --output /data/processed/soccernet_yolo \
+  --split-strategy existing \
+  --class-map configs/class_map_mot.yaml
 ```
 
 SoccerNet-Tracking et SportsMOT ne portent pas, dans leur GT MOT officielle, les
@@ -118,6 +326,8 @@ dernières epochs et n'est jamais appliquée au tracker.
 
 Renseigner d'abord les chemins `data` dans les YAML. Pour chaque phase suivante,
 remplacer `model` par le `best.pt` de la phase précédente.
+Pour une baseline utilisant uniquement SportsMOT, exécuter seulement la phase 1 :
+le modèle obtenu suivra les joueurs, mais n'aura pas appris les trois autres classes.
 
 ```bash
 # Phase 1 : adaptation SportsMOT

@@ -9,7 +9,12 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 from .augment import augment_training_dataset
 from .config import load_yaml
-from .data import create_oversampled_dataset, parse_class_map, prepare_mot_dataset
+from .data import (
+    create_match_map_template,
+    create_oversampled_dataset,
+    parse_class_map,
+    prepare_mot_dataset,
+)
 from .hardware import inspect_gpus, profile_summary, resolve_profile
 from .tracking import track_video
 from .training import train_detector, validate_detector
@@ -44,6 +49,14 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--ratios", type=_ratios, default=(0.70, 0.15, 0.15))
     prepare.add_argument("--seed", type=int, default=42)
     prepare.add_argument("--link-mode", choices=("symlink", "hardlink", "copy"), default="symlink")
+
+    match_map = subparsers.add_parser(
+        "create-match-map", help="Cree le CSV sequence -> match a completer"
+    )
+    match_map.add_argument("--source", type=Path, required=True)
+    match_map.add_argument("--output", type=Path, required=True)
+    match_map.add_argument("--sequence-list", type=Path)
+    match_map.add_argument("--force", action="store_true")
 
     oversample = subparsers.add_parser(
         "oversample", help="Surechantillonne les images d'une classe rare"
@@ -108,6 +121,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             link_mode=args.link_mode,
         )
         print(json.dumps(asdict(stats), indent=2))
+    elif args.command == "create-match-map":
+        count = create_match_map_template(
+            args.source, args.output, args.sequence_list, args.force
+        )
+        print("{} sequence(s) ecrites dans {}".format(count, args.output.resolve()))
     elif args.command == "oversample":
         print(create_oversampled_dataset(args.data, args.class_id, args.factor, args.output))
     elif args.command == "augment":

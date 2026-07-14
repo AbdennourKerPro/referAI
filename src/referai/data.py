@@ -47,15 +47,63 @@ def _infer_split(path: Path) -> Optional[str]:
 def _load_match_map(path: Optional[Path]) -> Dict[str, str]:
     if path is None:
         return {}
-    path = Path(path)
+    path = Path(path).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(
+            "Fichier de correspondance introuvable: {}. Creez-le avec "
+            "'referai-football create-match-map --source <dataset> --output {}'.".format(
+                path, path
+            )
+        )
     if path.suffix.lower() == ".json":
         content = json.loads(path.read_text(encoding="utf-8"))
-        return {str(key): str(value) for key, value in content.items()}
+        return {str(key).strip(): str(value).strip() for key, value in content.items()}
     result = {}
     with path.open("r", encoding="utf-8", newline="") as stream:
         for row in csv.DictReader(stream):
-            result[str(row["sequence"])] = str(row["match_id"])
+            result[str(row["sequence"]).strip()] = str(row["match_id"]).strip()
     return result
+
+
+def create_match_map_template(
+    source: Path,
+    output: Path,
+    sequence_list: Optional[Path] = None,
+    force: bool = False,
+) -> int:
+    """Cree un CSV a completer, sans inventer de regroupements entre clips."""
+    source = Path(source).expanduser().resolve()
+    output = Path(output).expanduser().resolve()
+    if output.exists() and not force:
+        raise FileExistsError(
+            "{} existe deja; utilisez --force uniquement pour le remplacer.".format(output)
+        )
+    sequences = discover_sequences(source, sequence_list=sequence_list)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(
+            stream,
+            fieldnames=("sequence", "match_id", "original_split", "source_path"),
+        )
+        writer.writeheader()
+        for sequence in sequences:
+            relative = sequence.root.relative_to(source)
+            # Si le dataset contient split/match/sequence, le dossier match est
+            # une suggestion fiable. Avec split/sequence, la valeur reste vide.
+            middle = [
+                part
+                for part in relative.parts[:-1]
+                if part.lower() not in SPLIT_ALIASES
+            ]
+            writer.writerow(
+                {
+                    "sequence": sequence.name,
+                    "match_id": "/".join(middle),
+                    "original_split": sequence.original_split or "",
+                    "source_path": str(relative),
+                }
+            )
+    return len(sequences)
 
 
 def discover_sequences(
@@ -215,7 +263,21 @@ def prepare_mot_dataset(
     link_mode: str = "symlink",
 ) -> ConversionStats:
     output = Path(output).expanduser().resolve()
+    if split_strategy == "by-match" and match_map is None:
+        raise ValueError(
+            "--split-strategy by-match exige --match-map. Generez un squelette avec "
+            "'referai-football create-match-map --source {} --output match_map.csv', "
+            "puis renseignez un match_id pour chaque sequence.".format(source)
+        )
     sequences = discover_sequences(source, match_map, sequence_list)
+    if split_strategy == "by-match":
+        missing_matches = [sequence.name for sequence in sequences if not sequence.match_id]
+        if missing_matches:
+            raise ValueError(
+                "match_id vide pour {} sequence(s), par exemple: {}".format(
+                    len(missing_matches), ", ".join(missing_matches[:5])
+                )
+            )
     splits = assign_splits(sequences, split_strategy, ratios, seed)
     class_map = dict(class_map or {-1: 0, 1: 0})
     invalid_targets = set(class_map.values()) - set(range(len(CLASS_NAMES)))
