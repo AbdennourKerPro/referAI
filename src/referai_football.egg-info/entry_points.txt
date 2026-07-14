@@ -1,0 +1,2 @@
+[console_scripts]
+referai-football = referai.cli:main

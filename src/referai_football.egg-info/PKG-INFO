@@ -1,0 +1,424 @@
+Metadata-Version: 2.4
+Name: referai-football
+Version: 0.1.0
+Summary: Detection et tracking multi-objets pour les videos de football
+Author: referAI
+License: Proprietary
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+
+# referAI — détection et tracking football
+
+Cette implémentation transforme le module décrit dans
+`module_detection_tracking_football.md` en pipeline exécutable : préparation MOT,
+fine-tuning YOLO11, ByteTrack, export JSON/JSONL/Parquet/MOT, vidéo annotée et
+statistiques opérationnelles.
+
+## Compatibilité GPU
+
+Deux environnements sont volontairement figés :
+
+| Machine | Environnement | Réglage initial | Précision |
+|---|---|---|---|
+| 3× Tesla K80, 11 Go par GPU, pilote R470/CUDA 11.4 | `requirements_K80.txt` | YOLO11m, 960 px, batch global 3 | FP32 |
+| RTX 3090 Ti, 24 Go | `requirements_3090Ti.txt` (PyTorch cu118) | YOLO11m, 1280 px, batch 8 | AMP/FP16 |
+
+Les mémoires des K80 ne s'additionnent pas : DDP réplique le modèle sur chaque
+carte. Le batch K80 est donc `1 × 3 GPU`, et non un batch dimensionné pour 33 Go.
+Le code détecte les GPU, limite le profil K80 à trois cartes, impose un batch global
+divisible par le nombre de GPU et diminue batch puis résolution après une OOM.
+L'AMP est désactivée sur Kepler : elle n'apporte pas les Tensor Cores d'Ampere et
+évite plusieurs chemins FP16 anciens de cuDNN.
+
+Le pilote R470 est la dernière branche pour Kepler et accepte CUDA 11.x. Le profil
+K80 emploie les roues officielles PyTorch 1.12.1/cu113, compatibles avec le pilote
+CUDA 11.4. Utiliser Python 3.9 pour K80 et Python 3.10 pour la 3090 Ti.
+
+```bash
+# K80
+python3.9 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements_K80.txt
+pip install -e .
+
+# ou 3090 Ti
+python3.10 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements_3090Ti.txt
+pip install -e .
+```
+
+Vérifier le contexte avant un entraînement :
+
+```bash
+referai-football inspect-hardware --hardware configs/hardware_K80.yaml
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.get_arch_list())"
+```
+
+Sur K80, la seconde commande doit notamment afficher `sm_37`. Sur 3090 Ti, elle
+doit afficher `sm_86`.
+
+## Télécharger et préparer SportsMOT
+
+SportsMOT est le jeu recommandé pour commencer la détection et le tracking des
+joueurs. **Le projet ne télécharge pas SportsMOT** : il faut d'abord accepter les
+conditions du dataset, télécharger les archives depuis la page CodaLab indiquée par
+le [dépôt officiel SportsMOT](https://github.com/MCG-NJU/SportsMOT), puis les extraire
+sur la machine d'entraînement. Le script `prepare-mot` intervient seulement après
+cette étape; il ne contacte aucun serveur et ne décompresse aucune archive.
+
+### 1. Télécharger et extraire les données
+
+Le lien officiel ouvre un dossier OneDrive partagé. Sur un serveur Linux, suivre la
+procédure headless ci-dessous; après l'extraction, vérifier l'arborescence indiquée.
+
+#### Téléchargement direct sur un serveur Linux sans interface graphique
+
+Il n'est pas nécessaire de télécharger le ZIP sur la machine locale. La méthode la
+plus robuste pour le dossier OneDrive partagé est `rclone`, car elle sait reprendre
+un transfert interrompu et vérifier les fichiers déjà copiés. `wget` ou `curl`
+appliqués directement à l'URL de partage téléchargent généralement la page HTML
+OneDrive et non l'archive.
+
+1. Depuis un navigateur, ouvrir le lien OneDrive SportsMOT, se connecter à un compte
+   Microsoft et choisir **Ajouter un raccourci à Mes fichiers** pour le dossier
+   partagé. Cette étape est nécessaire car `rclone` n'expose pas directement les
+   éléments « Partagés avec moi ».
+2. Sur le serveur, vérifier d'abord l'espace disponible sur la partition cible :
+
+```bash
+df -h /data
+mkdir -p /data/SportsMOT/raw
+```
+
+Il faut prévoir simultanément la place de l'archive et celle des fichiers extraits.
+Si `/data` n'existe pas ou n'est pas accessible en écriture, choisir un autre volume
+disposant de suffisamment d'espace et remplacer ce chemin dans toutes les commandes.
+
+3. Installer puis configurer `rclone` sur Ubuntu/Debian :
+
+```bash
+sudo apt-get update
+sudo apt-get install rclone
+rclone config
+```
+
+Dans `rclone config`, créer un nouveau remote nommé `onedrive`, choisir le backend
+Microsoft OneDrive, laisser le `client_id` et le `client_secret` vides, puis répondre
+`n` à la question sur l'ouverture automatique du navigateur. La commande affiche
+alors une instruction du type suivant à exécuter sur une machine possédant un
+navigateur et la même version de `rclone` :
+
+```bash
+rclone authorize "onedrive"
+```
+
+Après l'autorisation Microsoft, copier le jeton affiché dans le terminal du serveur.
+Ce jeton donne accès au OneDrive : ne pas l'ajouter au dépôt, à une capture d'écran
+ou à un journal partagé.
+
+4. Retrouver le nom exact du raccourci et inspecter son contenu :
+
+```bash
+rclone lsd onedrive:
+rclone lsf "onedrive:SportsMOT-2022-4-24"
+```
+
+Adapter `SportsMOT-2022-4-24` au nom retourné par `rclone lsd`. Télécharger ensuite
+le contenu directement sur le serveur. Pour que le transfert survive à une coupure
+SSH, lancer au préalable `tmux new -s sportsmot`, puis exécuter :
+
+```bash
+rclone copy "onedrive:SportsMOT-2022-4-24" /data/SportsMOT/raw \
+  --progress \
+  --transfers 4 \
+  --checkers 8 \
+  --retries 10 \
+  --low-level-retries 20
+```
+
+Relancer exactement la même commande après une coupure : `rclone copy` ignore les
+fichiers déjà transférés et reprend le contenu manquant. Vérifier ensuite les ZIP :
+
+```bash
+find /data/SportsMOT/raw -type f -name '*.zip' -print
+unzip -t /data/SportsMOT/raw/<ARCHIVE_SPORTSMOT>.zip
+unzip /data/SportsMOT/raw/<ARCHIVE_SPORTSMOT>.zip -d /data/SportsMOT
+```
+
+Remplacer `<ARCHIVE_SPORTSMOT>` par le nom réellement listé. Ne supprimer l'archive
+qu'après la réussite de `unzip -t`, de l'extraction et des vérifications
+d'arborescence ci-dessous.
+
+#### Arborescence attendue après extraction
+
+```text
+/data/SportsMOT/
+├── splits_txt/
+│   ├── football.txt
+│   ├── train.txt
+│   ├── val.txt
+│   └── test.txt
+└── dataset/
+    ├── train/
+    │   └── <SEQUENCE>/
+    │       ├── img1/
+    │       │   ├── 000001.jpg
+    │       │   ├── 000002.jpg
+    │       │   └── ...
+    │       ├── gt/
+    │       │   └── gt.txt
+    │       └── seqinfo.ini
+    ├── val/
+    │   └── <SEQUENCE>/
+    │       ├── img1/
+    │       ├── gt/gt.txt
+    │       └── seqinfo.ini
+    └── test/
+        └── <SEQUENCE>/
+            ├── img1/
+            └── seqinfo.ini
+```
+
+Le test officiel peut ne pas fournir `gt/gt.txt`. C'est normal : ces images seront
+converties, mais elles ne doivent pas servir à calculer localement des métriques avec
+des annotations absentes.
+
+Vérifier l'extraction avant de lancer le projet :
+
+```bash
+test -f /data/SportsMOT/splits_txt/football.txt
+test -d /data/SportsMOT/dataset/train
+find /data/SportsMOT/dataset -name seqinfo.ini | head
+```
+
+Chaque `<SEQUENCE>` doit être au format MOT17 : images dans `img1`, dimensions et
+fréquence dans `seqinfo.ini`, annotations dans `gt/gt.txt` pour train/val.
+L'argument `--source` devra pointer précisément vers le sous-dossier `dataset`, et
+non vers la racine `/data/SportsMOT`.
+
+### 2. Convertir uniquement les séquences de football
+
+```bash
+referai-football prepare-mot \
+  --source /data/SportsMOT/dataset \
+  --output /data/processed/sportsmot_yolo \
+  --sequence-list /data/SportsMOT/splits_txt/football.txt \
+  --split-strategy existing \
+  --class-map configs/class_map_mot.yaml
+```
+
+Cette commande conserve les splits officiels et produit notamment :
+
+```text
+/data/processed/sportsmot_yolo/
+├── data.yaml
+├── images/{train,val,test}/<SEQUENCE>/...
+├── labels/{train,val,test}/<SEQUENCE>/...
+├── mot_gt/...
+├── conversion_stats.json
+└── split_manifest.json
+```
+
+Par défaut, `images/` contient des liens symboliques vers le téléchargement original.
+Il faut donc conserver `/data/SportsMOT` après la conversion. Pour obtenir une copie
+autonome au prix d'un espace disque supplémentaire, ajouter `--link-mode copy`.
+
+### 3. Renseigner le chemin d'entraînement
+
+Dans `configs/train_sportsmot.yaml`, remplacer :
+
+```yaml
+data: /path/to/sportsmot_yolo/data.yaml
+```
+
+par :
+
+```yaml
+data: /data/processed/sportsmot_yolo/data.yaml
+```
+
+Puis lancer la phase SportsMOT avec le profil matériel voulu :
+
+```bash
+referai-football train \
+  --config configs/train_sportsmot.yaml \
+  --hardware configs/hardware_K80.yaml
+```
+
+SportsMOT annote les joueurs présents sur l'aire de jeu, mais ne constitue pas un
+dataset quatre classes pour `goalkeeper`, `referee` et `ball`. Utilisé seul, il
+permet donc une bonne baseline `player` et de tracking. Pour atteindre la sortie
+complète du module, il faudra ensuite ajouter un corpus football enrichi pour les
+trois classes manquantes.
+
+## Préparer SoccerNet-Tracking (optionnel)
+
+SoccerNet est utile comme seconde phase spécifique au football et pour compléter les
+cas non couverts par SportsMOT. Comme pour SportsMOT, son téléchargement n'est pas
+automatisé. Le fichier `match_map.csv` n'est pas fourni par le dépôt : il dépend des
+clips effectivement téléchargés. Générer d'abord son squelette :
+
+```bash
+referai-football create-match-map \
+  --source /data/SoccerNet/tracking \
+  --output match_map.csv
+```
+
+Ouvrir ensuite `match_map.csv` et renseigner `match_id` avec le même identifiant pour
+tous les clips provenant du même match. La commande suggère automatiquement cet
+identifiant lorsque l'arborescence contient un dossier de match; elle laisse sinon la
+cellule vide plutôt que d'inventer un regroupement incorrect.
+
+```bash
+referai-football prepare-mot \
+  --source /data/SoccerNet/tracking \
+  --output /data/processed/soccernet_yolo \
+  --split-strategy by-match \
+  --match-map match_map.csv \
+  --class-map configs/class_map_mot.yaml
+```
+
+`match_map.csv` relie chaque clip à son match et empêche les fuites :
+
+```csv
+sequence,match_id,original_split,source_path
+SNMOT-001,game_01,train,train/SNMOT-001
+SNMOT-002,game_01,train,train/SNMOT-002
+SNMOT-003,game_02,test,test/SNMOT-003
+```
+
+Pour convertir immédiatement les splits officiels sans les redistribuer, ne pas
+utiliser de mapping :
+
+```bash
+referai-football prepare-mot \
+  --source /data/SoccerNet/tracking \
+  --output /data/processed/soccernet_yolo \
+  --split-strategy existing \
+  --class-map configs/class_map_mot.yaml
+```
+
+SoccerNet-Tracking et SportsMOT ne portent pas, dans leur GT MOT officielle, les
+quatre classes détaillées du cahier des charges. Le mapping fourni les convertit donc
+en `player`. Pour apprendre `goalkeeper`, `referee` et surtout `ball`, il faut ajouter
+les annotations enrichies prévues dans la spécification et adapter
+`configs/class_map_mot.yaml`.
+
+Pour la phase ballon, les images contenant la classe 3 peuvent être répétées sans
+dupliquer les fichiers :
+
+```bash
+# Générer d'abord les variantes vidéo réalistes (jeu d'entraînement uniquement)
+referai-football augment \
+  --data /data/processed/soccernet_yolo/data.yaml \
+  --copies 1 --seed 42
+
+# Puis sur-échantillonner le ballon, variantes comprises
+referai-football oversample \
+  --data /data/processed/soccernet_yolo/data.yaml \
+  --class-id 3 --factor 4
+```
+
+Le résultat est `data_oversampled.yaml`. Le sur-échantillonnage agit comme une
+pondération de classe compatible avec le trainer Ultralytics, sans modifier sa loss
+interne.
+
+La commande `augment` ne touche pas à la validation/test et conserve les boîtes :
+elle ajoute luminosité/couleur, flou de mouvement, compression JPEG, réduction de
+résolution et petites occultations. Les transformations géométriques cohérentes avec
+les boîtes restent gérées par YOLO via les trois YAML : translation, zoom, changement
+d'échelle, retournement et mosaïque décroissante. La mosaïque est fermée sur les
+dernières epochs et n'est jamais appliquée au tracker.
+
+## Entraîner les trois phases
+
+Renseigner d'abord les chemins `data` dans les YAML. Pour chaque phase suivante,
+remplacer `model` par le `best.pt` de la phase précédente.
+Pour une baseline utilisant uniquement SportsMOT, exécuter seulement la phase 1 :
+le modèle obtenu suivra les joueurs, mais n'aura pas appris les trois autres classes.
+
+```bash
+# Phase 1 : adaptation SportsMOT
+referai-football train --config configs/train_sportsmot.yaml \
+  --hardware configs/hardware_K80.yaml
+
+# Phase 2 : domaine SoccerNet
+referai-football train --config configs/train_soccernet.yaml \
+  --hardware configs/hardware_K80.yaml
+
+# Phase 3 : ballon et cas difficiles
+referai-football train --config configs/train_ball.yaml \
+  --hardware configs/hardware_K80.yaml
+```
+
+Pour la 3090 Ti, remplacer uniquement le fichier matériel par
+`configs/hardware_3090Ti.yaml`. Une exécution interrompue se reprend avec `--resume`
+et un `model` pointant sur `last.pt`.
+
+Les réglages lourds sont explicitement distincts : 3 processus DDP sur K80,
+micro-batch 1 et FP32 ; un processus sur 3090 Ti, batch 8 et AMP. Si YOLO11m reste
+trop lent sur K80, `yolo11s.pt` peut être choisi sans changer le pipeline.
+
+## Valider et tracker une vidéo
+
+```bash
+referai-football validate \
+  --weights runs/detect/phase3_ball/weights/best.pt \
+  --data /data/processed/soccernet_yolo/data.yaml \
+  --hardware configs/hardware_3090Ti.yaml --split test
+
+referai-football track \
+  --video match.mp4 \
+  --weights runs/detect/phase3_ball/weights/best.pt \
+  --tracker configs/bytetrack_football.yaml \
+  --hardware configs/hardware_3090Ti.yaml \
+  --output artifacts/match.jsonl \
+  --annotated-video artifacts/match_annotated.mp4 \
+  --mot-output artifacts/match_mot.txt \
+  --trajectories-output artifacts/trajectories.json
+```
+
+Formats de sortie :
+
+- `.json` : tableau de frames au schéma demandé ;
+- `.jsonl` : même schéma, une frame par ligne, recommandé pour les longs matchs ;
+- `.parquet` : une ligne par objet et par frame, compression Zstandard ;
+- MOT : format 10 colonnes accepté par TrackEval/SoccerNet ;
+- `*.stats.json` : FPS, latence moyenne et pic de mémoire GPU.
+
+ByteTrack conserve 90 frames (environ 3,6 s à 25 fps), utilise les détections dès
+0,05 et ne crée une piste qu'à 0,45. Ces seuils doivent être ajustés sur validation.
+Le tracking d'une seule vidéo reste sur un GPU car son état est séquentiel ; les GPU
+restants servent à DDP pendant l'entraînement ou à traiter plusieurs vidéos via des
+processus séparés.
+
+### HOTA, IDF1, MOTA et AssA
+
+`--mot-output` produit exactement les 10 colonnes MOTChallenge. Le convertisseur
+conserve également `mot_gt/<split>/<sequence>/gt/gt.txt`, `seqinfo.ini` et les
+`seqmaps`. Ces fichiers sont destinés à l'implémentation officielle TrackEval :
+
+```bash
+git clone https://github.com/JonathonLuiten/TrackEval.git
+cd TrackEval
+python scripts/run_mot_challenge.py \
+  --METRICS HOTA CLEAR Identity \
+  --DO_PREPROC False \
+  --GT_FOLDER /data/processed/soccernet_yolo/mot_gt \
+  --TRACKERS_FOLDER /data/predictions
+```
+
+L'arborescence finale doit suivre le format de benchmark personnalisé documenté par
+TrackEval. Les familles `HOTA`, `CLEAR` et `Identity` donnent notamment HOTA/AssA,
+MOTA/fragmentations et IDF1/changements d'identité. Le prétraitement est désactivé
+car les classes distractrices MOT17 ne correspondent pas au protocole SoccerNet.
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+PYTHONPATH=src pytest
+```
+
+Les tests unitaires n'ont besoin ni de GPU ni des poids YOLO.
