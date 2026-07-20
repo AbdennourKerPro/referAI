@@ -377,12 +377,12 @@ La commande suivante sélectionne deux séquences de football du split de valida
 et crée un MP4 annoté par séquence :
 
 ```bash
-referai-football visualize-mot \
-  --source data/SportsMOT/dataset \
-  --output data/visualizations/sportsmot \
-  --sequence-list data/SportsMOT/splits_txt/football.txt \
-  --split val \
-  --num-sequences 2 \
+referai-football visualize-mot `
+  --source data/SportsMOT/dataset `
+  --output data/visualizations/sportsmot `
+  --sequence-list data/SportsMOT/splits_txt/football.txt `
+  --split val `
+  --num-sequences 2 `
   --boxes
 ```
 

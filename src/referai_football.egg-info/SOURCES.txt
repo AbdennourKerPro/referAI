@@ -11,6 +11,7 @@ src/referai/output.py
 src/referai/schemas.py
 src/referai/tracking.py
 src/referai/training.py
+src/referai/visualization.py
 src/referai_football.egg-info/PKG-INFO
 src/referai_football.egg-info/SOURCES.txt
 src/referai_football.egg-info/dependency_links.txt
@@ -20,3 +21,4 @@ tests/test_augment.py
 tests/test_data.py
 tests/test_hardware.py
 tests/test_output_metrics.py
+tests/test_visualization.py
