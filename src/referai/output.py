@@ -126,6 +126,8 @@ class MOTWriter(ObservationWriter):
 
     def write(self, frame: FrameObservations) -> None:
         for obj in frame.objects:
+            if obj.track_id < 0:
+                continue
             x1, y1, x2, y2 = obj.bbox
             self.stream.write(
                 "{},{},{:.3f},{:.3f},{:.3f},{:.3f},{:.6f},-1,-1,-1\n".format(

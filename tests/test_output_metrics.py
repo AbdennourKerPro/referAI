@@ -3,7 +3,7 @@ import json
 import pytest
 
 from referai.metrics import composite_detection_score, trajectory_diagnostics
-from referai.output import JSONWriter
+from referai.output import JSONWriter, MOTWriter
 from referai.schemas import FrameObservations, TrackedObject
 
 
@@ -37,3 +37,13 @@ def test_trajectory_gap_diagnostics():
     assert diagnostics.tracks == 1
     assert diagnostics.fragmented_tracks == 1
     assert diagnostics.total_gaps == 2
+
+
+def test_mot_writer_ignores_detections_without_track_id(tmp_path):
+    path = tmp_path / "tracks.txt"
+    with MOTWriter(path) as writer:
+        writer.write(frame(0, track_id=-1))
+        writer.write(frame(1, track_id=7))
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("2,7,")

@@ -17,6 +17,7 @@ from .data import (
 )
 from .hardware import inspect_gpus, profile_summary, resolve_profile
 from .tracking import track_video
+from .tracking_evaluation import evaluate_tracking
 from .training import train_detector, validate_detector
 from .visualization import visualize_mot_sequences
 
@@ -117,6 +118,29 @@ def build_parser() -> argparse.ArgumentParser:
     track.add_argument("--trajectories-output", type=Path)
     track.add_argument("--confidence", type=float, default=0.05)
     track.add_argument("--iou", type=float, default=0.70)
+
+    evaluate = subparsers.add_parser(
+        "evaluate-tracking",
+        help="Infere les sequences MOT puis calcule HOTA, IDF1, MOTA et AssA",
+    )
+    evaluate.add_argument("--data", type=Path, required=True)
+    evaluate.add_argument("--weights", type=Path)
+    evaluate.add_argument("--trackeval-root", type=Path, required=True)
+    evaluate.add_argument("--output", type=Path, required=True)
+    evaluate.add_argument("--split", choices=("train", "val", "test"), default="val")
+    evaluate.add_argument(
+        "--tracker", type=Path, default=Path("configs/bytetrack_football.yaml")
+    )
+    evaluate.add_argument("--tracker-name", default="referai")
+    evaluate.add_argument("--hardware")
+    evaluate.add_argument("--confidence", type=float, default=0.05)
+    evaluate.add_argument("--iou", type=float, default=0.70)
+    evaluate.add_argument("--class-id", type=int, default=0)
+    evaluate.add_argument(
+        "--sequence", dest="sequences", action="append", help="Nom exact; option repetable"
+    )
+    evaluate.add_argument("--max-sequences", type=int)
+    evaluate.add_argument("--skip-inference", action="store_true")
     return parser
 
 
@@ -187,6 +211,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             iou=args.iou,
         )
         print(json.dumps(stats.to_dict(), indent=2))
+    elif args.command == "evaluate-tracking":
+        result = evaluate_tracking(
+            data_yaml=args.data,
+            weights=args.weights,
+            trackeval_root=args.trackeval_root,
+            output=args.output,
+            split=args.split,
+            tracker=args.tracker,
+            tracker_name=args.tracker_name,
+            hardware=_hardware(args.hardware),
+            confidence=args.confidence,
+            iou=args.iou,
+            class_id=args.class_id,
+            requested_sequences=args.sequences,
+            max_sequences=args.max_sequences,
+            skip_inference=args.skip_inference,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
 
 

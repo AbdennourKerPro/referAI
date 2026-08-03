@@ -9,3 +9,4 @@ runs/
 *.pt
 *.onnx
 data/
+runs1/

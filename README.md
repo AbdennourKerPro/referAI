@@ -407,24 +407,58 @@ processus séparés.
 
 ### HOTA, IDF1, MOTA et AssA
 
-`--mot-output` produit exactement les 10 colonnes MOTChallenge. Le convertisseur
-conserve également `mot_gt/<split>/<sequence>/gt/gt.txt`, `seqinfo.ini` et les
-`seqmaps`. Ces fichiers sont destinés à l'implémentation officielle TrackEval :
+La commande `evaluate-tracking` exécute le détecteur et ByteTrack sur chaque séquence,
+écrit les prédictions au format MOTChallenge puis lance l'implémentation officielle
+TrackEval. Cloner TrackEval une seule fois à côté du projet :
 
 ```bash
-git clone https://github.com/JonathonLuiten/TrackEval.git
-cd TrackEval
-python scripts/run_mot_challenge.py \
-  --METRICS HOTA CLEAR Identity \
-  --DO_PREPROC False \
-  --GT_FOLDER data/processed/soccernet_yolo/mot_gt \
-  --TRACKERS_FOLDER data/predictions
+git clone https://github.com/JonathonLuiten/TrackEval.git /workspace/TrackEval
 ```
 
-L'arborescence finale doit suivre le format de benchmark personnalisé documenté par
-TrackEval. Les familles `HOTA`, `CLEAR` et `Identity` donnent notamment HOTA/AssA,
-MOTA/fragmentations et IDF1/changements d'identité. Le prétraitement est désactivé
-car les classes distractrices MOT17 ne correspondent pas au protocole SoccerNet.
+Lancer ensuite l'évaluation complète sur le split de validation :
+
+```bash
+referai-football evaluate-tracking \
+  --data data/processed/sportsmot_yolo/data.yaml \
+  --weights runs/detect/phase1_sportsmot/weights/best.pt \
+  --tracker configs/bytetrack_football.yaml \
+  --hardware configs/hardware_3090Ti.yaml \
+  --trackeval-root /workspace/TrackEval \
+  --output artifacts/tracking_eval/val \
+  --split val
+```
+
+Pour valider rapidement la chaîne sur une seule séquence, ajouter
+`--max-sequences 1`. `--sequence NOM_SEQUENCE` permet de cibler une séquence précise
+et peut être répété.
+
+Les prédictions sont conservées sous
+`artifacts/tracking_eval/val/predictions/referai/data/`. Pour recalculer les métriques
+à partir de ces fichiers sans refaire l'inférence :
+
+```bash
+referai-football evaluate-tracking \
+  --data data/processed/sportsmot_yolo/data.yaml \
+  --trackeval-root /workspace/TrackEval \
+  --output artifacts/tracking_eval/val \
+  --split val \
+  --skip-inference
+```
+
+Le résumé principal est écrit dans `tracking_metrics.json`. Il contient HOTA, DetA,
+AssA, MOTA, MOTP, IDF1, IDP, IDR, les changements d'identité (`IDSW`), les
+fragmentations (`Frag`), le rappel et la précision. Les valeurs TrackEval sont des
+pourcentages entre 0 et 100. Le fichier natif complet reste disponible sous
+`predictions/referai/trackeval/pedestrian_summary.txt`.
+
+Cette évaluation nécessite une vérité terrain MOT non vide. Utiliser `val` pour régler
+ByteTrack ; n'utiliser `test` que si ce split contient également ses fichiers
+`mot_gt/test/<sequence>/gt/gt.txt`. Par défaut, seule la classe YOLO `0` (`player`) est
+évaluée, ce qui correspond au périmètre SportsMOT actuel.
+
+TrackEval peut afficher `Error importing BURST ... pycocotools` au démarrage. Cet
+avertissement concerne le benchmark BURST et n'empêche pas le calcul MOT des familles
+HOTA, CLEAR et Identity utilisées ici.
 
 ## Tests
 
