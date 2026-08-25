@@ -159,9 +159,9 @@ def generate_mot_predictions(
     except ImportError as exc:
         raise RuntimeError("opencv-python-headless est requis pour evaluer le tracking") from exc
     profile = resolve_profile(hardware)
-    LOGGER.info(profile_summary(profile, inspect_gpus()))
-    inference_device = profile.device_ids[0] if profile.device_ids else "cpu"
-    YOLO = _import_yolo()
+    LOGGER.info(profile_summary(profile, inspect_gpus(backend=profile.backend)))
+    inference_device = profile.primary_device
+    YOLO = _import_yolo(profile.backend)
     model = YOLO(str(Path(weights).expanduser().resolve()))
     tracker = Path(tracker).expanduser().resolve()
     if not tracker.is_file():

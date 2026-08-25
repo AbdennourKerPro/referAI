@@ -8,8 +8,13 @@ src/referai/data.py
 src/referai/hardware.py
 src/referai/metrics.py
 src/referai/output.py
+src/referai/role_classification.py
+src/referai/role_postprocessing.py
 src/referai/schemas.py
+src/referai/soccernet.py
+src/referai/trackeval_runner.py
 src/referai/tracking.py
+src/referai/tracking_evaluation.py
 src/referai/training.py
 src/referai/visualization.py
 src/referai_football.egg-info/PKG-INFO
@@ -21,4 +26,6 @@ tests/test_augment.py
 tests/test_data.py
 tests/test_hardware.py
 tests/test_output_metrics.py
+tests/test_soccernet_roles.py
+tests/test_tracking_evaluation.py
 tests/test_visualization.py

@@ -120,12 +120,18 @@ d'une vidéo ou d'une séquence MOT.
 - augmentations et sur-échantillonnage des classes rares ;
 - export compatible avec TrackEval ;
 - évaluation automatisée du tracking avec HOTA, DetA, AssA, MOTA, MOTP, IDF1,
-  ID switches, fragmentations, rappel et précision.
+  ID switches, fragmentations, rappel et précision ;
+- téléchargement et préparation de SoccerNet Game State v1.3 ;
+- extraction de crops avec rôles, équipes, maillots, `track_id` et `bbox_pitch` ;
+- entraînement et évaluation d'un classifieur de rôles avec lissage temporel ;
+- pondération des observations par qualité et comparaison de quatre agrégations par track ;
+- prior spatial image déployable sans calibration et prior terrain SoccerNet explicitement
+  limité à un oracle d'évaluation.
 
 ### Travaux restants
 
-- constituer ou intégrer des annotations pour `goalkeeper`, `referee` et `ball` ;
-- entraîner et évaluer le détecteur quatre classes ;
+- télécharger SoccerNet Game State puis entraîner et évaluer le classifieur de rôles ;
+- entraîner séparément un détecteur spécialisé pour le ballon ;
 - régler les seuils ByteTrack sur le split de validation ;
 - mesurer le rappel du ballon par taille apparente ;
 - tester des séquences longues, occultations, regroupements et changements d'échelle ;
@@ -166,7 +172,11 @@ d'une vidéo ou d'une séquence MOT.
 | Date | Livraison intermédiaire | Validation | Suite |
 |---|---|---|---|
 | 2026-08-03 | Commande `evaluate-tracking`, inférence par séquence MOT, intégration TrackEval et export JSON des métriques | Tests automatisés et scénario synthétique parfait HOTA/MOTA/IDF1 = 100 | Mesurer sur `val` puis régler les seuils ByteTrack |
-- Prochaine étape :
+| 2026-08-04 | Pipeline SoccerNet Game State : téléchargement, conversion des rôles, classifieur YOLO11s-cls et lissage par `track_id` | Tests synthétiques du schéma officiel et de l'entraînement simulé | Télécharger les données, entraîner le modèle et mesurer macro-F1/rappel par rôle |
+| 2026-08-19 | Révision du classifieur de rôles : trois classes, crops avec contexte 30 %, plafond par track, sampling équilibré, sélection macro-F1 et agrégation temporelle des probabilités | 36 tests automatisés et lint Ruff | Générer `soccernet_roles_v2`, réentraîner le même YOLO11s-cls, puis comparer macro-F1 et F1 par rôle au modèle précédent |
+| 2026-08-25 | Post-traitement des rôles : qualité par crop, contributions auditables, agrégation pondérée, prior image et prior terrain SoccerNet oracle | Tests unitaires et d'intégration du pipeline ; baseline historique conservé | Régler les forces sur `val`, figer la configuration puis mesurer une fois sur `test` |
+- Prochaine étape : évaluer les quatre variantes sur `val`; le prior terrain produit ne sera
+  conçu qu'après le module de calibration.
 
 ## 6. Etape 1 - Segmentation des plans caméra
 

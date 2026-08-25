@@ -1,0 +1,10 @@
+# Installer d'abord les wheels PyTorch XPU officielles :
+# python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/xpu
+# Ne pas utiliser requirements_3090Ti.txt dans cet environnement : il remplace PyTorch XPU par CUDA.
+ultralytics>=8.4.67,<8.5
+numpy>=1.26,<3
+opencv-python-headless>=4.10
+PyYAML>=6.0
+pandas>=2.2
+pyarrow>=17
+psutil>=6.0

@@ -1,0 +1,12 @@
+name: intel_arc_xpu
+backend: xpu
+devices: auto
+max_devices: 1
+imgsz: 224
+batch: 4
+workers: 0
+amp: false
+pin_memory: false
+deterministic: false
+max_oom_retries: 3
+min_imgsz: 224

@@ -7,7 +7,13 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, DefaultDict, Dict, List, Optional
 
-from .hardware import inspect_gpus, profile_summary, resolve_profile
+from .hardware import (
+    inspect_gpus,
+    peak_memory_allocated_mb,
+    profile_summary,
+    reset_peak_memory_stats,
+    resolve_profile,
+)
 from .output import MOTWriter, make_observation_writer
 from .schemas import FrameObservations, RunStatistics, TrackedObject
 from .training import _import_yolo
@@ -70,11 +76,11 @@ def track_video(
     except ImportError as exc:
         raise RuntimeError("opencv-python-headless est requis pour traiter une video") from exc
     profile = resolve_profile(hardware)
-    LOGGER.info(profile_summary(profile, inspect_gpus()))
+    LOGGER.info(profile_summary(profile, inspect_gpus(backend=profile.backend)))
     # Un flux temporel est sequentiel: un seul GPU garde l'etat ByteTrack. Les GPU
     # additionnels servent au DDP d'entrainement ou a plusieurs videos en parallele.
-    inference_device = profile.device_ids[0] if profile.device_ids else "cpu"
-    YOLO = _import_yolo()
+    inference_device = profile.primary_device
+    YOLO = _import_yolo(profile.backend)
     model = YOLO(str(weights))
     capture = cv2.VideoCapture(str(video))
     if not capture.isOpened():
@@ -98,10 +104,8 @@ def track_video(
     trajectories: DefaultDict[int, List[Dict[str, Any]]] = defaultdict(list)
     if profile.device_ids:
         try:
-            import torch
-
-            torch.cuda.reset_peak_memory_stats(inference_device)
-        except (ImportError, RuntimeError):
+            reset_peak_memory_stats(profile.backend, inference_device)
+        except (ImportError, RuntimeError, TypeError):
             pass
     frame_id = 0
     started = time.perf_counter()
@@ -160,10 +164,8 @@ def track_video(
     peak_memory = None
     if profile.device_ids:
         try:
-            import torch
-
-            peak_memory = torch.cuda.max_memory_allocated(inference_device) / (1024 * 1024)
-        except (ImportError, RuntimeError):
+            peak_memory = peak_memory_allocated_mb(profile.backend, inference_device)
+        except (ImportError, RuntimeError, TypeError):
             pass
     stats = RunStatistics(
         frames=frame_id,

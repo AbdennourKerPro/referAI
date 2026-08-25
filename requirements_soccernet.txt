@@ -1,0 +1,3 @@
+# Installer apres le requirements materiel principal.
+# SDK officiel utilise uniquement pour telecharger les archives SoccerNet.
+SoccerNet==0.1.62

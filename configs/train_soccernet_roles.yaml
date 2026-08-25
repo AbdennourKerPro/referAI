@@ -1,0 +1,27 @@
+model: yolo11s-cls.pt
+# Optionnel: chemin explicite vers last.pt lorsque --resume est utilise.
+# Sans cette cle, le chemin project/name/weights/last.pt est deduit automatiquement.
+# resume_from: runs/classify/soccernet_roles/weights/last.pt
+data: data/processed/soccernet_roles_v2
+hardware:
+  max_devices: 1
+train:
+  epochs: 24
+  patience: 5
+  imgsz: 224
+  batch: 64
+  workers: 8
+  cache: false
+  optimizer: AdamW
+  lr0: 0.0005
+  lrf: 0.01
+  cos_lr: true
+  weight_decay: 0.0005
+  warmup_epochs: 3
+  dropout: 0.25
+  auto_augment: randaugment
+  erasing: 0.20
+  seed: 42
+  deterministic: true
+  project: runs/classify
+  name: soccernet_roles_v2

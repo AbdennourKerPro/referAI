@@ -5,6 +5,9 @@ Cette implémentation transforme le module décrit dans
 fine-tuning YOLO11, ByteTrack, export JSON/JSONL/Parquet/MOT, vidéo annotée et
 statistiques opérationnelles.
 
+Le téléchargement et l'entraînement du classifieur de rôles SoccerNet Game State sont
+documentés séparément dans [`SOCCERNET_GAMESTATE_PIPELINE.md`](SOCCERNET_GAMESTATE_PIPELINE.md).
+
 ## Compatibilité GPU
 
 Deux environnements sont volontairement figés :
